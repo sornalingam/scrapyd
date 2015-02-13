@@ -2,9 +2,14 @@ import traceback
 import uuid
 from cStringIO import StringIO
 
+from twisted.web import resource, static
+from twisted.application.service import IServiceCollection
+
 from twisted.python import log
 
 from .utils import get_spider_list, JsonResource, UtilsCache
+
+from .interfaces import IPoller, IEggStorage, ISpiderScheduler
 
 class WsResource(JsonResource):
 
@@ -124,3 +129,39 @@ class DeleteVersion(DeleteProject):
         version = txrequest.args['version'][0]
         self._delete_version(project, version)
         return {"node_name": self.root.nodename, "status": "ok"}
+
+class ListAllJobs(WsResource):
+
+    @property
+    def launcher(self):
+        app = IServiceCollection(self.app, self.app)
+        return app.getServiceNamed('launcher')
+
+    @property
+    def scheduler(self):
+        return self.app.getComponent(ISpiderScheduler)
+
+    @property
+    def eggstorage(self):
+        return self.app.getComponent(IEggStorage)
+
+    @property
+    def poller(self):
+        return self.app.getComponent(IPoller)
+
+    def render_GET(self, txrequest):
+
+        for projectname, queue in self.root.poller.queues.items():
+             pending = [{"project":projectname,"id": x["_job"], "spider": x["name"]} for x in queue.list()]
+
+        spiders = self.root.launcher.processes.values()
+        running = [{"id": s.job, "spider": s.spider,"project": s.project, "pid": s.pid,"start_time" : s.start_time.isoformat(' ')} for s in spiders]
+
+        finished = [{"id": s.job, "spider": s.spider,
+            "start_time": s.start_time.isoformat(' '),
+            "end_time": s.end_time.isoformat(' '),
+            "project" : s.project} for s in self.root.launcher.finished
+            ]
+
+        return {"status":"ok", "pending": pending, "running" : running, "finished" : finished}
+
